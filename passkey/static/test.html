@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebAuthn Demo</title>
+    <style>
+      button {
+        margin: 10px;
+      }
+      #status {
+        margin-top: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>WebAuthn Demo</h1>
+    <input type="text" id="username" placeholder="Username" />
+    <button id="register">Register</button>
+    <button id="login">Login</button>
+    <div id="status"></div>
+
+    <script>
+      let savedCredentialId = null; // Will store the credential ID for login
+      // Registration function
+      async function register() {
+        try {
+          const username = document.getElementById("username").value;
+
+          const beginUrl = "/webauthn/register-begin?userID=" + username;
+          const challengeResponse = await fetch(beginUrl, { method: "POST" });
+          const { challenge } = await challengeResponse.json();
+
+          const credential = await navigator.credentials.create({
+            publicKey: {
+              challenge: Uint8Array.from(challenge, (c) => c.charCodeAt(0)),
+              rp: { id: "localhost", name: "myapp" },
+              user: {
+                id: new TextEncoder().encode(username),
+                name: username,
+                displayName: username,
+              },
+              pubKeyCredParams: [{ alg: -7, type: "public-key" }],
+              authenticatorSelection: {
+                requireResidentKey: true,
+                userVerification: "preferred",
+              },
+            },
+          });
+
+          const finishBody = {
+            id: credential.id,
+            type: credential.type,
+            response: {
+              clientDataJSON: btoa(
+                String.fromCharCode(
+                  ...new Uint8Array(credential.response.clientDataJSON)
+                )
+              ),
+              attestationObject: btoa(
+                String.fromCharCode(
+                  ...new Uint8Array(credential.response.attestationObject)
+                )
+              ),
+              authenticatorData: btoa(
+                String.fromCharCode(
+                  ...new Uint8Array(credential.response.getAuthenticatorData())
+                )
+              ),
+              publicKey: btoa(
+                String.fromCharCode(
+                  ...new Uint8Array(credential.response.getPublicKey())
+                )
+              ),
+              algorithm: credential.response.getPublicKeyAlgorithm(),
+              transports: credential.response.getTransports(),
+            },
+          };
+
+          await fetch("/webauthn/register-finish?userID=" + username, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(finishBody),
+          });
+
+          document.getElementById("status").textContent =
+            "Registration successful! Credential ID saved.";
+          console.log("Saved credential ID:", savedCredentialId); // Log to console
+        } catch (error) {
+          document.getElementById("status").textContent =
+            "Registration failed: " + error.message;
+        }
+      }
+
+      // Login function
+      async function login() {
+        // try {
+        const challengeResponse = await fetch(
+          "/webauthn/authenticate-begin?userID=anonymous",
+          { method: "POST" }
+        );
+        const challengeData = await challengeResponse.json();
+
+        // Decode the saved credential ID from base64url to Uint8Array
+        const base64urlToUint8Array = (base64url) => {
+          const padding = "=".repeat((4 - (base64url.length % 4)) % 4);
+          const base64 =
+            base64url.replace(/-/g, "+").replace(/_/g, "/") + padding;
+          const binaryString = atob(base64);
+          const uint8Array = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            uint8Array[i] = binaryString.charCodeAt(i);
+          }
+          return uint8Array;
+        };
+
+        const assertion = await navigator.credentials.get({
+          publicKey: {
+            challenge: Uint8Array.from(challengeData.challenge, (c) =>
+              c.charCodeAt(0)
+            ),
+            rpId: "localhost",
+            userVerification: "preferred",
+          },
+        });
+
+        const finishBody = {
+          id: assertion.id,
+          type: assertion.type,
+          response: {
+            clientDataJSON: btoa(
+              String.fromCharCode(
+                ...new Uint8Array(assertion.response.clientDataJSON)
+              )
+            ),
+            authenticatorData: btoa(
+              String.fromCharCode(
+                ...new Uint8Array(assertion.response.authenticatorData)
+              )
+            ),
+            signature: btoa(
+              String.fromCharCode(
+                ...new Uint8Array(assertion.response.signature)
+              )
+            ),
+            userHandle: String.fromCharCode(
+              ...new Uint8Array(assertion.response.userHandle)
+            ),
+          },
+        };
+        const authResponse = await fetch(
+          "/webauthn/authenticate-finish?userID=anonymous",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(finishBody),
+          }
+        );
+
+        if (authResponse.ok) {
+          document.getElementById("status").textContent = "Login successful!";
+        } else {
+          document.getElementById("status").textContent =
+            "Login failed: " + (await authResponse.text());
+        }
+        // } catch (error) {
+        //   document.getElementById("status").textContent =
+        //     "Login failed: " + error.message;
+        // }
+      }
+
+      // Event listeners for buttons
+      document.getElementById("register").addEventListener("click", register);
+      document.getElementById("login").addEventListener("click", login);
+    </script>
+  </body>
+</html>
